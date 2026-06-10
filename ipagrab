@@ -1,0 +1,132 @@
+#!/bin/bash
+# ipagrab — watch Apple Configurator's cache, grab the first complete .ipa to ~/Desktop.
+# Menu (arrows + Enter): GO! / EXIT. Override paths via IPAGRAB_CACHE / IPAGRAB_DEST.
+
+CACHE="${IPAGRAB_CACHE:-$HOME/Library/Group Containers/K36BKF7T3D.group.com.apple.configurator/Library/Caches/Assets/TemporaryItems/MobileApps}"
+DEST="${IPAGRAB_DEST:-$HOME/Desktop}"
+STABLE_POLLS=3                         # size must hold steady this many 0.2s polls
+MIN_BYTES=$((1024 * 1024))             # ignore files under 1 MB
+size_of() { stat -f%z "$1" 2>/dev/null || echo 0; }
+
+RAINBOW_HUES=(196 208 226 46 51 129 165)
+rainbow_word() {                       # color each char of $1 with successive hues
+  local s=$1 esc=$'\033' n=${#RAINBOW_HUES[@]} i out=""
+  for ((i = 0; i < ${#s}; i++)); do out+="${esc}[1;38;5;${RAINBOW_HUES[i % n]}m${s:i:1}"; done
+  printf '%s%s' "$out" "$esc[0m"
+}
+
+show_banner() {                        # 3D rainbow ANSI-Shadow "ipagrab"
+  local reset=$'\033[0m' bold=$'\033[1m' i
+  local c=(196 208 226 46 51 129)
+  local lines=(
+'██╗██████╗  █████╗  ██████╗ ██████╗  █████╗ ██████╗ '
+'██║██╔══██╗██╔══██╗██╔════╝ ██╔══██╗██╔══██╗██╔══██╗'
+'██║██████╔╝███████║██║  ███╗██████╔╝███████║██████╔╝'
+'██║██╔═══╝ ██╔══██║██║   ██║██╔══██╗██╔══██║██╔══██╗'
+'██║██║     ██║  ██║╚██████╔╝██║  ██║██║  ██║██████╔╝'
+'╚═╝╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ')
+  printf '\n'
+  for i in "${!lines[@]}"; do printf '  %s\033[38;5;%sm%s%s\n' "$bold" "${c[$i]}" "${lines[$i]}" "$reset"; done
+  printf '       %s\033[38;5;51m▓▒░ Apple Configurator .ipa grabber ░▒▓%s\n' "$bold" "$reset"
+}
+
+ready_menu() {                         # READY? menu; returns 0=GO! 1=EXIT
+  local options=("GO!" "EXIT") selected=0 n=2 first=1 i key rest
+  printf '\nREADY?  (Up/Down to choose, Enter to confirm)\n'
+  tput civis 2>/dev/null
+  trap 'tput cnorm 2>/dev/null; printf "\n"; exit 130' INT
+  while true; do
+    [ "$first" -eq 1 ] || tput cuu "$n" 2>/dev/null; first=0
+    for i in "${!options[@]}"; do
+      if [ "$i" -eq "$selected" ]; then printf '\r\033[K  \033[7m  %d. %s  \033[0m\n' "$((i + 1))" "${options[$i]}"
+      else printf '\r\033[K    %d. %s\n' "$((i + 1))" "${options[$i]}"; fi
+    done
+    # arrow = 3-byte ESC seq; read 2 trailing bytes (no fractional -t on bash 3.2)
+    IFS= read -rsn1 key
+    [ "$key" = $'\x1b' ] && { IFS= read -rsn2 rest; key+="$rest"; }
+    case "$key" in
+      $'\x1b[A'|$'\x1bOA') selected=$(( (selected - 1 + n) % n ));;
+      $'\x1b[B'|$'\x1bOB') selected=$(( (selected + 1) % n ));;
+      1) selected=0;; 2) selected=1;;
+      ''|$'\r'|$'\n') break;;
+    esac
+  done
+  tput cnorm 2>/dev/null; trap - INT
+  return "$selected"
+}
+
+# Periodic scrolling rainbow wave: render its distinct phases ONCE, then each
+# animation tick is a single printf of a precomputed string.
+WAVE_BARS=(▁ ▂ ▃ ▄ ▅ ▆ ▇ █)
+WAVE_LEVELS=(4 5 6 6 7 7 7 6 6 5 4 2 1 1 0 0 0 1 1 2)
+WAVE_HUES=(196 202 208 214 220 226 190 46 48 51 45 39 33 63 99 129 165 201 198 197)
+WAVE_WIDTH=46; WAVE_FRAMES=(); WAVE_NFRAMES=0
+build_wave_frames() {
+  local esc=$'\033' reset=$'\033[0m' n=${#WAVE_LEVELS[@]} o x line
+  WAVE_NFRAMES=$n
+  for ((o = 0; o < n; o++)); do
+    line=""
+    for ((x = 0; x < WAVE_WIDTH; x++)); do line+="${esc}[38;5;${WAVE_HUES[(x + o) % n]}m${WAVE_BARS[WAVE_LEVELS[(x + o) % n]]}"; done
+    WAVE_FRAMES[$o]="${line}${reset}"
+  done
+}
+
+watch_and_grab() {                     # animate + grab; returns 0=grabbed 2=stopped
+  local bold=$'\033[1m' reset=$'\033[0m' cyan=$'\033[38;5;51m'
+  # bash `read -n1` blocks, freezing the wave; instead set tty min0/time0 and poll
+  # one byte with `dd`. Key/scan run every WORK_EVERY frames so the wave stays smooth.
+  local saved=$(stty -g 2>/dev/null)
+  stty -echo -icanon min 0 time 0 2>/dev/null
+  tput civis 2>/dev/null
+  [ "$WAVE_NFRAMES" -eq 0 ] && build_wave_frames
+  _wg_cleanup() { stty "$saved" 2>/dev/null; tput cnorm 2>/dev/null; }
+  trap '_wg_cleanup; trap - INT; printf "\n"; exit 130' INT
+  printf '\n  %s%s▓▒░ WATCHING ░▒▓%s   press %s[S]%s to STOP\n\n' "$bold" "$cyan" "$reset" "$bold" "$reset"
+  SECONDS=0
+  local WORK_EVERY=3 t=0 up="" status="scanning Configurator cache…" result="" result_sz="" f key
+  local last stable cur src_sz base out out_sz
+  while true; do
+    if [ $(( t % WORK_EVERY )) -eq 0 ]; then
+      key=$(dd bs=1 count=1 2>/dev/null)
+      case "$key" in
+        s|S|q|Q|$'\033') _wg_cleanup; trap - INT
+          printf '\n  %s⏹ STOPPED%s — returning to menu\n' "$bold" "$reset"; return 2 ;;
+      esac
+      f=$(find "$CACHE" -name '*.ipa' 2>/dev/null | head -1)
+      if [ -n "$f" ] && [ -e "$f" ]; then
+        status="downloading… ⬇ settling"
+        last=-1; stable=0
+        while :; do                    # wait for size to settle = complete download
+          cur=$(size_of "$f"); [ ! -e "$f" ] && break
+          if [ "$cur" = "$last" ] && [ "$cur" -ge "$MIN_BYTES" ]; then
+            stable=$((stable + 1)); [ "$stable" -ge "$STABLE_POLLS" ] && break
+          else stable=0; fi
+          last=$cur; sleep 0.2
+        done
+        if [ -e "$f" ]; then
+          src_sz=$(size_of "$f"); base="$(basename "$f")"; out="$DEST/$(date +%H%M%S)_${base}"
+          if cp -c "$f" "$out" 2>/dev/null || cp "$f" "$out" 2>/dev/null; then
+            out_sz=$(size_of "$out")
+            if [ "$out_sz" = "$src_sz" ] && [ "$out_sz" -ge "$MIN_BYTES" ]; then
+              result="$out"; result_sz="$out_sz"; break
+            else rm -f "$out"; fi       # truncated mid-copy; keep watching
+          fi
+        fi
+      fi
+    fi
+    # one printf; $up does cursor-up-2 via raw escape (no per-frame tput fork)
+    printf '%s\r  %s\n\r  \033[K%s[S] STOP%s   ⏱ %02d:%02d   %s\n' \
+      "$up" "${WAVE_FRAMES[t % WAVE_NFRAMES]}" "$bold" "$reset" "$((SECONDS / 60))" "$((SECONDS % 60))" "$status"
+    up=$'\033[2A'; t=$((t + 1)); sleep 0.04
+  done
+  _wg_cleanup; trap - INT
+  printf '\n  %s\n' "$(rainbow_word '▓▒░ ✔ GRABBED ░▒▓')"
+  printf '     %s%s%s  %s(%s bytes)%s\n' "$cyan" "$(basename "$result")" "$reset" "$bold" "$result_sz" "$reset"
+  printf '  %s📂 Reminder:%s your .ipa is on the Desktop →  %s%s%s\n' "$bold" "$reset" "$cyan" "$DEST" "$reset"
+  printf '  Returning to menu…\n'
+}
+
+show_banner
+while true; do
+  if ready_menu; then watch_and_grab; else echo "Exiting."; exit 0; fi
+done
