@@ -67,13 +67,31 @@ READY?  (Up/Down to choose, Enter to confirm)
 
 ---
 
+## Install
+
+```sh
+git clone https://github.com/NiuLevel/ipagrab.git
+cd ipagrab
+./install.sh
+```
+
+`install.sh` symlinks the script into a directory on your `PATH`, so you can
+then just type **`ipagrab`** from anywhere. (It's a symlink, so `git pull`
+updates apply automatically.) Open a new terminal afterwards.
+
+Don't want to install? Just run it in place: `./ipagrab`.
+
+Uninstall with `./install.sh uninstall`.
+
+---
+
 ## How to use it
 
 1. **Open Apple Configurator** and sign in with the owning Apple ID.
 2. **Connect your iPhone/iPad** via USB → unlock it → tap **Trust This Computer**.
 3. **Start the watcher** in Terminal *before* you download anything:
    ```sh
-   ~/ipagrab/ipagrab
+   ipagrab
    ```
    Pick **GO!** with the arrow keys + Enter. The wave starts and it watches.
 4. In Apple Configurator: select your device → **Add → Apps…**
@@ -124,18 +142,6 @@ catch. Cancel the prompt once you've seen `✔ GRABBED`.
   absent, Configurator can't fetch it.
 
 ---
-
-## Make it a global command (optional)
-
-To run it from anywhere as just `ipagrab`:
-```sh
-# Apple Silicon (Homebrew):
-ln -s ~/ipagrab/ipagrab /opt/homebrew/bin/ipagrab
-# or Intel / system:
-sudo ln -s ~/ipagrab/ipagrab /usr/local/bin/ipagrab
-# then simply:
-ipagrab
-```
 
 ## Configuration (optional)
 
