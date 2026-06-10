@@ -46,33 +46,6 @@ race to copy the file. So the rule is simple:
 
 ---
 
-## The interface
-
-Running `ipagrab` opens a small terminal UI:
-
-```
-  ██╗██████╗  █████╗  ██████╗ ██████╗  █████╗ ██████╗
-  ██║██╔══██╗██╔══██╗██╔════╝ ██╔══██╗██╔══██╗██╔══██╗
-  ██║██████╔╝███████║██║  ███╗██████╔╝███████║██████╔╝
-  ██║██╔═══╝ ██╔══██║██║   ██║██╔══██╗██╔══██║██╔══██╗
-  ██║██║     ██║  ██║╚██████╔╝██║  ██║██║  ██║██████╔╝
-  ╚═╝╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝
-       ▓▒░ Apple Configurator .ipa grabber ░▒▓
-
-READY?  (Up/Down to choose, Enter to confirm)
-    1. GO!
-    2. EXIT
-```
-
-- **GO!** starts watching — a scrolling rainbow wave animates with an elapsed
-  timer while it scans. Press **`S`** (or `Q` / `Esc`) at any time to **STOP**
-  and return to the menu.
-- When it grabs a file you get a `✔ GRABBED` confirmation, the saved path, and a
-  reminder that the `.ipa` is on your Desktop — then it loops back to the menu.
-- **EXIT** quits.
-
----
-
 ## Requirements
 
 - A Mac (this uses macOS-only paths).
