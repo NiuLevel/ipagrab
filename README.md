@@ -10,6 +10,24 @@ nothing app-specific in it.
 
 ---
 
+## Install
+
+```sh
+git clone https://github.com/NiuLevel/ipagrab.git
+cd ipagrab
+./install.sh
+```
+
+`install.sh` symlinks the script into a directory on your `PATH`, so you can
+then just type **`ipagrab`** from anywhere. (It's a symlink, so `git pull`
+updates apply automatically.) Open a new terminal afterwards.
+
+Don't want to install? Just run it in place: `./ipagrab`.
+
+Uninstall with `./install.sh uninstall`.
+
+---
+
 ## What it actually does
 
 `ipagrab` is a ~130-line bash script. It is **not** a downloader and it does
@@ -64,24 +82,6 @@ READY?  (Up/Down to choose, Enter to confirm)
   apps while adding them to a connected device).
 - You must be **signed into Apple Configurator** with the Apple ID that
   **owns the app** (Configurator menu bar → *Account → Sign In…*).
-
----
-
-## Install
-
-```sh
-git clone https://github.com/NiuLevel/ipagrab.git
-cd ipagrab
-./install.sh
-```
-
-`install.sh` symlinks the script into a directory on your `PATH`, so you can
-then just type **`ipagrab`** from anywhere. (It's a symlink, so `git pull`
-updates apply automatically.) Open a new terminal afterwards.
-
-Don't want to install? Just run it in place: `./ipagrab`.
-
-Uninstall with `./install.sh uninstall`.
 
 ---
 
