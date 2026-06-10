@@ -28,24 +28,6 @@ Uninstall with `./install.sh uninstall`.
 
 ---
 
-## What it actually does
-
-`ipagrab` is a ~130-line bash script. It is **not** a downloader and it does
-**not** talk to Apple, the network, or your phone. All it does is:
-
-1. Watch one folder on your Mac — Apple Configurator's temp cache:
-   `~/Library/Group Containers/K36BKF7T3D.group.com.apple.configurator/Library/Caches/Assets/TemporaryItems/MobileApps`
-2. The instant a `.ipa` appears there, wait for it to finish downloading
-   (its size has to stop changing), then copy **one** complete, verified copy
-   to `~/Desktop` (named `HHMMSS_<AppName>.ipa`) before Configurator removes it.
-
-The actual *download* is done by **Apple Configurator**. `ipagrab` just wins the
-race to copy the file. So the rule is simple:
-
-> **Whatever Apple Configurator downloads, `ipagrab` saves.**
-
----
-
 ## Requirements
 
 - A Mac (this uses macOS-only paths).
@@ -86,6 +68,24 @@ catch. Cancel the prompt once you've seen `✔ GRABBED`.
 
 ---
 
+## What it actually does
+
+`ipagrab` is a ~130-line bash script. It is **not** a downloader and it does
+**not** talk to Apple, the network, or your phone. All it does is:
+
+1. Watch one folder on your Mac — Apple Configurator's temp cache:
+   `~/Library/Group Containers/K36BKF7T3D.group.com.apple.configurator/Library/Caches/Assets/TemporaryItems/MobileApps`
+2. The instant a `.ipa` appears there, wait for it to finish downloading
+   (its size has to stop changing), then copy **one** complete, verified copy
+   to `~/Desktop` (named `HHMMSS_<AppName>.ipa`) before Configurator removes it.
+
+The actual *download* is done by **Apple Configurator**. `ipagrab` just wins the
+race to copy the file. So the rule is simple:
+
+> **Whatever Apple Configurator downloads, `ipagrab` saves.**
+
+---
+
 ## Limitations (read these)
 
 - **You can only get apps your Apple ID owns.** `ipagrab` can't conjure apps you
@@ -99,25 +99,6 @@ catch. Cancel the prompt once you've seen `✔ GRABBED`.
   you'd need to decrypt it on a jailbroken device (separate process).
 - **Start `ipagrab` (and pick GO!) before** clicking *Add*, and keep it running —
   it polls a few times a second and only copies files that exist while it's running.
-
----
-
-## ⚠️ Responsible use & disclaimer
-
-`ipagrab` is intended as a **personal backup/archive tool only**. By using it you agree to:
-
-- **Only grab apps you legitimately acquired** with your own Apple ID.
-- **Not distribute** the `.ipa` files it saves.
-- **Not decrypt** them or strip their DRM.
-
-The `.ipa` files remain App Store FairPlay-encrypted and are meant for archiving
-and sideloading onto **your own** devices — nothing more.
-
-This software is provided **"as is", without warranty of any kind** (see
-[LICENSE](LICENSE)). You are solely responsible for how you use it and for
-complying with all applicable laws and the App Store / Apple Media Services
-terms. The author accepts **no liability** for any misuse, damages, or legal
-consequences arising from its use.
 
 ---
 
@@ -145,3 +126,22 @@ IPAGRAB_CACHE=/path/to/cache IPAGRAB_DEST=/path/to/dest ipagrab
 ```
 
 Defaults: Configurator's cache folder and `~/Desktop`.
+
+---
+
+## ⚠️ Responsible use & disclaimer
+
+`ipagrab` is intended as a **personal backup/archive tool only**. By using it you agree to:
+
+- **Only grab apps you legitimately acquired** with your own Apple ID.
+- **Not distribute** the `.ipa` files it saves.
+- **Not decrypt** them or strip their DRM.
+
+The `.ipa` files remain App Store FairPlay-encrypted and are meant for archiving
+and sideloading onto **your own** devices — nothing more.
+
+This software is provided **"as is", without warranty of any kind** (see
+[LICENSE](LICENSE)). You are solely responsible for how you use it and for
+complying with all applicable laws and the App Store / Apple Media Services
+terms. The author accepts **no liability** for any misuse, damages, or legal
+consequences arising from its use.
