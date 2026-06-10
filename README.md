@@ -1,6 +1,6 @@
 # ipagrab
 
-A tiny macOS helper that grabs `.ipa` files out of **Apple Configurator 2**'s
+A tiny macOS helper that grabs `.ipa` files out of **Apple Configurator**'s
 temporary download cache and saves them to your Desktop — before Configurator
 deletes them.
 
@@ -58,7 +58,7 @@ READY?  (Up/Down to choose, Enter to confirm)
 ## Requirements
 
 - A Mac (this uses macOS-only paths).
-- **Apple Configurator 2** — free from the Mac App Store:
+- **Apple Configurator** — free from the Mac App Store:
   <https://apps.apple.com/app/apple-configurator/id1037126344>
 - An **iPhone or iPad** you can connect by **USB** (Configurator only downloads
   apps while adding them to a connected device).
