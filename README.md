@@ -129,6 +129,25 @@ catch. Cancel the prompt once you've seen `✔ GRABBED`.
 
 ---
 
+## ⚠️ Responsible use & disclaimer
+
+`ipagrab` is intended as a **personal backup/archive tool only**. By using it you agree to:
+
+- **Only grab apps you legitimately acquired** with your own Apple ID.
+- **Not distribute** the `.ipa` files it saves.
+- **Not decrypt** them or strip their DRM.
+
+The `.ipa` files remain App Store FairPlay-encrypted and are meant for archiving
+and sideloading onto **your own** devices — nothing more.
+
+This software is provided **"as is", without warranty of any kind** (see
+[LICENSE](LICENSE)). You are solely responsible for how you use it and for
+complying with all applicable laws and the App Store / Apple Media Services
+terms. The author accepts **no liability** for any misuse, damages, or legal
+consequences arising from its use.
+
+---
+
 ## Troubleshooting
 
 - **Nothing gets grabbed:** make sure the watcher was running (on **GO!**) *before*
