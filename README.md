@@ -1,6 +1,6 @@
 # ipagrab
 
-The easiest way to download an IPA from the App Store on macOS — no credentials, no tokens, no API calls. Just Apple Configurator doing the actual download, and `ipagrab` grabbing the file before it disappears.
+`ipagrab` is a tiny tool to quickly download an IPA of an app you own from the App Store on macOS. Run it locally and privately, with no auth, no credentials, no tokens, no API calls. 
 
 ---
 
@@ -21,7 +21,7 @@ You're not alone. Many users are running into these lately:
 **iMazing**
 - The IPA download button is greyed out and can't be clicked
 
-These are Apple-side restrictions that third-party tools can't easily work around. `ipagrab` takes a different approach — it lets Apple Configurator (Apple's own app) handle the download, then instantly saves the `.ipa` to your Desktop. No credentials exposed to any third-party tool, no broken API calls.
+These are Apple-side restrictions that third-party tools can't easily work around. `ipagrab` lets Apple Configurator (Apple's own app) handle the download, then instantly saves the `.ipa` to your Desktop. No credentials exposed to any third-party tool, no broken API calls.
 
 ---
 
@@ -36,7 +36,7 @@ Press `Command + Space`, type `Terminal`, press Enter.
 git clone https://github.com/NiuLevel/ipagrab.git && cd ipagrab && ./install.sh
 ```
 
-**Step 3 — Open a new Terminal window.** You can now type `ipagrab` from anywhere.
+**Step 3 — Open a new Terminal window.** You can now type `ipagrab` to launch.
 
 > Don't want to install? Just run `./ipagrab` from the folder.
 
@@ -126,4 +126,4 @@ Defaults: Configurator's cache folder and `~/Desktop`.
 - Not distribute the `.ipa` files it saves.
 - Not decrypt them or strip their DRM.
 
-This software is provided **"as is", without warranty of any kind** (see [LICENSE](LICENSE)). You are solely responsible for how you use it and for complying with all applicable laws and Apple's terms of service. The author accepts no liability for any misuse, damages, or legal consequences.
+This tool is provided **"as is", without warranty of any kind** (see [LICENSE](LICENSE)). You are solely responsible for how you use it and for complying with all applicable laws and Apple's terms of service. The author accepts no liability for any misuse, damages, or legal consequences.
