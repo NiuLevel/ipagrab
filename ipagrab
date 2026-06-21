@@ -2,21 +2,179 @@
 # ipagrab — watch Apple Configurator's cache, grab the first complete .ipa to ~/Desktop.
 # Menu (arrows + Enter): GO! / EXIT. Override paths via IPAGRAB_CACHE / IPAGRAB_DEST.
 
-CACHE="${IPAGRAB_CACHE:-$HOME/Library/Group Containers/K36BKF7T3D.group.com.apple.configurator/Library/Caches/Assets/TemporaryItems/MobileApps}"
+CONFIGURATOR_HOME="$HOME/Library/Group Containers/K36BKF7T3D.group.com.apple.configurator"
+DEFAULT_CACHE="$CONFIGURATOR_HOME/Library/Caches/Assets/TemporaryItems/MobileApps"
+CACHE="${IPAGRAB_CACHE:-$DEFAULT_CACHE}"
 DEST="${IPAGRAB_DEST:-$HOME/Desktop}"
-STABLE_POLLS=3                         # size must hold steady this many 0.2s polls
-MIN_BYTES=$((1024 * 1024))             # ignore files under 1 MB
+USE_COLOR=0; RESET=""; BOLD=""; CYAN=""
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  USE_COLOR=1; RESET=$'\033[0m'; BOLD=$'\033[1m'; CYAN=$'\033[38;5;51m'
+fi
 size_of() { stat -f%z "$1" 2>/dev/null || echo 0; }
+fingerprint_of() { stat -f '%i:%m:%z' "$1" 2>/dev/null; }
+archive_is_readable() { unzip -tqq "$1" >/dev/null 2>&1; }
+state_line() { printf '  %s[%s]%s %s\n' "$BOLD$CYAN" "$1" "$RESET" "$2"; }
+error() { printf '%s[ERROR]%s %s\n' "$BOLD" "$RESET" "$*" >&2; }
+
+human_size() {
+  local bytes=$1 unit suffix tenths
+  if [ "$bytes" -ge 1073741824 ]; then unit=1073741824; suffix=GiB
+  elif [ "$bytes" -ge 1048576 ]; then unit=1048576; suffix=MiB
+  elif [ "$bytes" -ge 1024 ]; then unit=1024; suffix=KiB
+  else printf '%s B' "$bytes"; return
+  fi
+  tenths=$(( (bytes * 10 + unit / 2) / unit ))
+  printf '%d.%d %s' "$((tenths / 10))" "$((tenths % 10))" "$suffix"
+}
+
+show_help() {
+  printf '%s\n' \
+    'Usage: ipagrab [--help]' \
+    '' \
+    "Watch Apple Configurator's cache and save the next complete IPA to ~/Desktop." \
+    '' \
+    'Options:' \
+    '  -h, --help  Show this help and exit.' \
+    '' \
+    'Environment:' \
+    '  IPAGRAB_CACHE  Override the Configurator cache folder.' \
+    '  IPAGRAB_DEST   Override the destination folder.' \
+    '  NO_COLOR       Disable optional ANSI colors.'
+}
+
+preflight() {
+  local os required
+  command -v uname >/dev/null 2>&1 || { error "required command not found: uname. Next: restore the standard macOS tools, then retry."; return 1; }
+  os=$(uname -s 2>/dev/null) || { error "could not identify the operating system. Next: run ipagrab in macOS Terminal."; return 1; }
+  [ "$os" = "Darwin" ] || { error "macOS is required; detected: $os. Next: run ipagrab on a Mac."; return 1; }
+  for required in stat unzip find mktemp cp rm basename date ln sleep dd stty tput; do
+    command -v "$required" >/dev/null 2>&1 || { error "required command not found: $required. Next: restore the standard macOS tools, then retry."; return 1; }
+  done
+  [ -t 0 ] && [ -t 1 ] || { error "an interactive terminal is required. Next: run ipagrab in macOS Terminal, or use --help."; return 1; }
+  validate_paths
+}
+
+validate_paths() {
+  command -v unzip >/dev/null 2>&1 || { error "unzip is required to validate IPA archives. Next: restore the standard macOS tools, then retry."; return 1; }
+  case "$CACHE" in /*) ;; *) error "cache path must be absolute: $CACHE. Next: set IPAGRAB_CACHE to a path beginning with /."; return 1;; esac
+  case "$DEST" in /*) ;; *) error "destination path must be absolute: $DEST. Next: set IPAGRAB_DEST to a path beginning with /."; return 1;; esac
+  if [ -e "$CACHE" ]; then
+    [ -d "$CACHE" ] || { error "Configurator cache path is not a directory: $CACHE. Next: fix IPAGRAB_CACHE, then retry."; return 1; }
+    [ -r "$CACHE" ] && [ -x "$CACHE" ] || { error "Configurator cache is not readable: $CACHE. Next: check its permissions, then retry."; return 1; }
+  elif [ "$CACHE" != "$DEFAULT_CACHE" ] || [ ! -d "$CONFIGURATOR_HOME" ]; then
+    error "Configurator cache does not exist: $CACHE. Next: open Configurator once, or set IPAGRAB_CACHE to an existing directory."; return 1
+  else
+    [ -r "$CONFIGURATOR_HOME" ] && [ -x "$CONFIGURATOR_HOME" ] || { error "Configurator container is not readable: $CONFIGURATOR_HOME. Next: check its permissions, then retry."; return 1; }
+  fi
+  [ -d "$DEST" ] || { error "destination does not exist: $DEST. Next: create it or set IPAGRAB_DEST, then retry."; return 1; }
+  [ -w "$DEST" ] && [ -x "$DEST" ] || { error "destination is not writable: $DEST. Next: choose a writable IPAGRAB_DEST, then retry."; return 1; }
+}
+
+START_PATHS=()
+START_FINGERPRINTS=()
+REJECTED_PATHS=()
+REJECTED_FINGERPRINTS=()
+LAST_CANDIDATE=""
+snapshot_cache() {
+  local f
+  START_PATHS=(); START_FINGERPRINTS=(); REJECTED_PATHS=(); REJECTED_FINGERPRINTS=(); LAST_CANDIDATE=""
+  # ponytail: Configurator cache names do not contain newlines; use a normal
+  # find stream until that changes, then upgrade this boundary to NUL records.
+  while IFS= read -r f; do
+    START_PATHS+=("$f")
+    START_FINGERPRINTS+=("$(fingerprint_of "$f")")
+  done < <(find "$CACHE" -type f -name '*.ipa' 2>/dev/null)
+}
+
+unchanged_from_start() {
+  local f=$1 now i
+  now=$(fingerprint_of "$f")
+  for ((i = 0; i < ${#START_PATHS[@]}; i++)); do
+    [ "$f" = "${START_PATHS[$i]}" ] && [ "$now" = "${START_FINGERPRINTS[$i]}" ] && return 0
+  done
+  return 1
+}
+
+rejected_unchanged() {
+  local f=$1 now i
+  now=$(fingerprint_of "$f")
+  for ((i = 0; i < ${#REJECTED_PATHS[@]}; i++)); do
+    [ "$f" = "${REJECTED_PATHS[$i]}" ] && [ "$now" = "${REJECTED_FINGERPRINTS[$i]}" ] && return 0
+  done
+  return 1
+}
+
+reject_candidate() {
+  local f=$1 now i
+  now=$(fingerprint_of "$f")
+  # ponytail: cache file counts are small, so a Bash 3.2-compatible linear scan
+  # wins here; upgrade both path tables together if that ceiling changes.
+  for ((i = 0; i < ${#REJECTED_PATHS[@]}; i++)); do
+    if [ "$f" = "${REJECTED_PATHS[$i]}" ]; then REJECTED_FINGERPRINTS[$i]=$now; return; fi
+  done
+  REJECTED_PATHS+=("$f"); REJECTED_FINGERPRINTS+=("$now")
+}
+
+find_candidate() {
+  local f i seen_last=0 candidates=()
+  if [ ! -e "$CACHE" ]; then
+    if [ "$CACHE" = "$DEFAULT_CACHE" ] && [ -d "$CONFIGURATOR_HOME" ]; then
+      [ -r "$CONFIGURATOR_HOME" ] && [ -x "$CONFIGURATOR_HOME" ] && return 3
+      error "Configurator container is no longer readable: $CONFIGURATOR_HOME. Next: check its permissions, then retry."; return 2
+    fi
+    error "Configurator cache no longer exists: $CACHE. Next: restore it or set IPAGRAB_CACHE, then retry."; return 2
+  fi
+  [ -d "$CACHE" ] || { error "Configurator cache path is not a directory: $CACHE. Next: fix IPAGRAB_CACHE, then retry."; return 2; }
+  [ -r "$CACHE" ] && [ -x "$CACHE" ] || { error "Configurator cache is no longer readable: $CACHE. Next: check its permissions, then retry."; return 2; }
+  [ -d "$DEST" ] || { error "destination no longer exists: $DEST. Next: recreate it or set IPAGRAB_DEST, then retry."; return 2; }
+  [ -w "$DEST" ] && [ -x "$DEST" ] || { error "destination is no longer writable: $DEST. Next: choose a writable IPAGRAB_DEST, then retry."; return 2; }
+  while IFS= read -r f; do
+    unchanged_from_start "$f" || rejected_unchanged "$f" || candidates+=("$f")
+  done < <(find "$CACHE" -type f -name '*.ipa' 2>/dev/null)
+  [ "${#candidates[@]}" -gt 0 ] || return 1
+  for ((i = 0; i < ${#candidates[@]}; i++)); do
+    [ "$seen_last" -eq 1 ] && { printf '%s\n' "${candidates[$i]}"; return 0; }
+    [ "${candidates[$i]}" = "$LAST_CANDIDATE" ] && seen_last=1
+  done
+  printf '%s\n' "${candidates[0]}"
+}
+
+RESULT=""; RESULT_SIZE=""; COPY_TMP=""
+copy_complete_ipa() {
+  local f=$1 tmp base stamp out suffix=0
+  RESULT=""; RESULT_SIZE=""; COPY_TMP=""
+  archive_is_readable "$f" || return 1
+  tmp=$(mktemp "$DEST/.ipagrab.XXXXXX") || { error "cannot create a temporary file in destination: $DEST. Next: check free space and permissions, then retry."; return 2; }
+  COPY_TMP=$tmp
+  if ! cp -c "$f" "$tmp" 2>/dev/null && ! cp "$f" "$tmp" 2>/dev/null; then
+    rm -f "$tmp"; COPY_TMP=""
+    [ -e "$f" ] || return 1
+    error "cannot copy IPA to destination: $DEST. Next: check free space and permissions, then retry."; return 2
+  fi
+  archive_is_readable "$tmp" || { rm -f "$tmp"; COPY_TMP=""; return 1; }
+
+  base=$(basename "$f"); stamp=$(date +%H%M%S); out="$DEST/${stamp}_${base}"
+  while ! ln "$tmp" "$out" 2>/dev/null; do
+    if [ -e "$out" ] || [ -L "$out" ]; then
+      suffix=$((suffix + 1)); out="$DEST/${stamp}_${base%.ipa}_${suffix}.ipa"
+    else
+      rm -f "$tmp"; COPY_TMP=""; error "cannot save IPA in destination: $DEST. Next: check free space and permissions, then retry."; return 2
+    fi
+  done
+  rm -f "$tmp"; COPY_TMP=""
+  RESULT="$out"; RESULT_SIZE=$(size_of "$out")
+}
 
 RAINBOW_HUES=(196 208 226 46 51 129 165)
 rainbow_word() {                       # color each char of $1 with successive hues
   local s=$1 esc=$'\033' n=${#RAINBOW_HUES[@]} i out=""
+  [ "$USE_COLOR" -eq 0 ] && { printf '%s' "$s"; return; }
   for ((i = 0; i < ${#s}; i++)); do out+="${esc}[1;38;5;${RAINBOW_HUES[i % n]}m${s:i:1}"; done
   printf '%s%s' "$out" "$esc[0m"
 }
 
 show_banner() {                        # 3D rainbow ANSI-Shadow "ipagrab"
-  local reset=$'\033[0m' bold=$'\033[1m' i
+  local i
   local c=(196 208 226 46 51 129)
   local lines=(
 '██╗██████╗  █████╗  ██████╗ ██████╗  █████╗ ██████╗ '
@@ -26,23 +184,39 @@ show_banner() {                        # 3D rainbow ANSI-Shadow "ipagrab"
 '██║██║     ██║  ██║╚██████╔╝██║  ██║██║  ██║██████╔╝'
 '╚═╝╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═════╝ ')
   printf '\n'
-  for i in "${!lines[@]}"; do printf '  %s\033[38;5;%sm%s%s\n' "$bold" "${c[$i]}" "${lines[$i]}" "$reset"; done
-  printf '       %s\033[38;5;51m▓▒░ Apple Configurator .ipa grabber ░▒▓%s\n' "$bold" "$reset"
+  for i in "${!lines[@]}"; do
+    if [ "$USE_COLOR" -eq 1 ]; then printf '  %s\033[38;5;%sm%s%s\n' "$BOLD" "${c[$i]}" "${lines[$i]}" "$RESET"
+    else printf '  %s\n' "${lines[$i]}"; fi
+  done
+  printf '       %s%s▓▒░ Apple Configurator .ipa grabber ░▒▓%s\n' "$BOLD" "$CYAN" "$RESET"
+}
+
+show_setup() {
+  printf '\n  Watch: %s\n  Save:  %s\n' "$CACHE" "$DEST"
+  if [ -d "$CACHE" ]; then printf '  Existing cache files are ignored until Configurator changes them.\n'
+  else printf '  Cache status: waiting for Configurator to create it.\n'; fi
 }
 
 ready_menu() {                         # READY? menu; returns 0=GO! 1=EXIT
   local options=("GO!" "EXIT") selected=0 n=2 first=1 i key rest
-  printf '\nREADY?  (Up/Down to choose, Enter to confirm)\n'
+  printf '\n'
+  state_line "READY" "Choose GO! and press Enter. Once WATCHING, start Add → Apps… in Configurator."
+  printf '  Keys: Up/Down or 1/2 selects; Enter confirms.\n'
+  trap 'tput cnorm 2>/dev/null; printf "\n"; state_line "STOPPED" "Interrupted."; exit 130' INT TERM HUP
   tput civis 2>/dev/null
-  trap 'tput cnorm 2>/dev/null; printf "\n"; exit 130' INT
   while true; do
     [ "$first" -eq 1 ] || tput cuu "$n" 2>/dev/null; first=0
     for i in "${!options[@]}"; do
-      if [ "$i" -eq "$selected" ]; then printf '\r\033[K  \033[7m  %d. %s  \033[0m\n' "$((i + 1))" "${options[$i]}"
+      if [ "$i" -eq "$selected" ] && [ "$USE_COLOR" -eq 1 ]; then printf '\r\033[K  \033[7m  %d. %s  \033[0m\n' "$((i + 1))" "${options[$i]}"
+      elif [ "$i" -eq "$selected" ]; then printf '\r\033[K  > %d. %s\n' "$((i + 1))" "${options[$i]}"
       else printf '\r\033[K    %d. %s\n' "$((i + 1))" "${options[$i]}"; fi
     done
     # arrow = 3-byte ESC seq; read 2 trailing bytes (no fractional -t on bash 3.2)
-    IFS= read -rsn1 key
+    if ! IFS= read -rsn1 key; then
+      tput cnorm 2>/dev/null; trap - INT TERM HUP
+      state_line "STOPPED" "Input closed; exiting."
+      return 1
+    fi
     [ "$key" = $'\x1b' ] && { IFS= read -rsn2 rest; key+="$rest"; }
     case "$key" in
       $'\x1b[A'|$'\x1bOA') selected=$(( (selected - 1 + n) % n ));;
@@ -51,7 +225,7 @@ ready_menu() {                         # READY? menu; returns 0=GO! 1=EXIT
       ''|$'\r'|$'\n') break;;
     esac
   done
-  tput cnorm 2>/dev/null; trap - INT
+  tput cnorm 2>/dev/null; trap - INT TERM HUP
   return "$selected"
 }
 
@@ -62,71 +236,93 @@ WAVE_LEVELS=(4 5 6 6 7 7 7 6 6 5 4 2 1 1 0 0 0 1 1 2)
 WAVE_HUES=(196 202 208 214 220 226 190 46 48 51 45 39 33 63 99 129 165 201 198 197)
 WAVE_WIDTH=46; WAVE_FRAMES=(); WAVE_NFRAMES=0
 build_wave_frames() {
-  local esc=$'\033' reset=$'\033[0m' n=${#WAVE_LEVELS[@]} o x line
+  local esc=$'\033' n=${#WAVE_LEVELS[@]} o x line
   WAVE_NFRAMES=$n
   for ((o = 0; o < n; o++)); do
     line=""
-    for ((x = 0; x < WAVE_WIDTH; x++)); do line+="${esc}[38;5;${WAVE_HUES[(x + o) % n]}m${WAVE_BARS[WAVE_LEVELS[(x + o) % n]]}"; done
-    WAVE_FRAMES[$o]="${line}${reset}"
+    for ((x = 0; x < WAVE_WIDTH; x++)); do
+      if [ "$USE_COLOR" -eq 1 ]; then line+="${esc}[38;5;${WAVE_HUES[(x + o) % n]}m"; fi
+      line+="${WAVE_BARS[WAVE_LEVELS[(x + o) % n]]}"
+    done
+    WAVE_FRAMES[$o]="${line}${RESET}"
   done
 }
 
 watch_and_grab() {                     # animate + grab; returns 0=grabbed 2=stopped
-  local bold=$'\033[1m' reset=$'\033[0m' cyan=$'\033[38;5;51m'
   # bash `read -n1` blocks, freezing the wave; instead set tty min0/time0 and poll
   # one byte with `dd`. Key/scan run every WORK_EVERY frames so the wave stays smooth.
-  local saved=$(stty -g 2>/dev/null)
+  local saved elapsed
+  saved=$(stty -g 2>/dev/null)
+  _wg_cleanup() {
+    [ -n "$COPY_TMP" ] && rm -f "$COPY_TMP"; COPY_TMP=""
+    [ -n "$saved" ] && stty "$saved" 2>/dev/null
+    tput cnorm 2>/dev/null
+  }
+  trap '_wg_cleanup; trap - INT TERM HUP; printf "\n"; state_line "STOPPED" "Interrupted; terminal restored."; exit 130' INT TERM HUP
   stty -echo -icanon min 0 time 0 2>/dev/null
   tput civis 2>/dev/null
   [ "$WAVE_NFRAMES" -eq 0 ] && build_wave_frames
-  _wg_cleanup() { stty "$saved" 2>/dev/null; tput cnorm 2>/dev/null; }
-  trap '_wg_cleanup; trap - INT; printf "\n"; exit 130' INT
-  printf '\n  %s%s▓▒░ WATCHING ░▒▓%s   press %s[S]%s to STOP\n\n' "$bold" "$cyan" "$reset" "$bold" "$reset"
+  printf '\n'
+  state_line "WATCHING" "Waiting for a new IPA. Start Add → Apps… in Configurator now."
+  printf '  Keys: S, Q, or Escape stops and returns to the menu.\n\n'
   SECONDS=0
-  local WORK_EVERY=3 t=0 up="" status="scanning Configurator cache…" result="" result_sz="" f key
-  local last stable cur src_sz base out out_sz
+  local WORK_EVERY=3 t=0 up="" status="[WATCHING] Waiting for a new IPA…" f key scan_status copy_status
+  snapshot_cache
   while true; do
     if [ $(( t % WORK_EVERY )) -eq 0 ]; then
       key=$(dd bs=1 count=1 2>/dev/null)
       case "$key" in
-        s|S|q|Q|$'\033') _wg_cleanup; trap - INT
-          printf '\n  %s⏹ STOPPED%s — returning to menu\n' "$bold" "$reset"; return 2 ;;
+        s|S|q|Q|$'\033') _wg_cleanup; trap - INT TERM HUP
+          printf '\n'; state_line "STOPPED" "No IPA saved; returning to the menu."; return 2 ;;
       esac
-      f=$(find "$CACHE" -name '*.ipa' 2>/dev/null | head -1)
-      if [ -n "$f" ] && [ -e "$f" ]; then
-        status="downloading… ⬇ settling"
-        last=-1; stable=0
-        while :; do                    # wait for size to settle = complete download
-          cur=$(size_of "$f"); [ ! -e "$f" ] && break
-          if [ "$cur" = "$last" ] && [ "$cur" -ge "$MIN_BYTES" ]; then
-            stable=$((stable + 1)); [ "$stable" -ge "$STABLE_POLLS" ] && break
-          else stable=0; fi
-          last=$cur; sleep 0.2
-        done
-        if [ -e "$f" ]; then
-          src_sz=$(size_of "$f"); base="$(basename "$f")"; out="$DEST/$(date +%H%M%S)_${base}"
-          if cp -c "$f" "$out" 2>/dev/null || cp "$f" "$out" 2>/dev/null; then
-            out_sz=$(size_of "$out")
-            if [ "$out_sz" = "$src_sz" ] && [ "$out_sz" -ge "$MIN_BYTES" ]; then
-              result="$out"; result_sz="$out_sz"; break
-            else rm -f "$out"; fi       # truncated mid-copy; keep watching
-          fi
-        fi
+      f=$(find_candidate); scan_status=$?
+      if [ "$scan_status" -eq 0 ]; then
+        LAST_CANDIDATE=$f
+        status="[VALIDATING] Waiting for $(basename "$f") to finish…"
+        printf '%s\r  %s\n\r  \033[K%s[S/Q/Esc] STOP%s   %02d:%02d   %s\n' \
+          "$up" "${WAVE_FRAMES[t % WAVE_NFRAMES]}" "$BOLD" "$RESET" "$((SECONDS / 60))" "$((SECONDS % 60))" "$status"
+        up=$'\033[2A'; t=$((t + 1))
+        copy_complete_ipa "$f"; copy_status=$?
+        [ "$copy_status" -eq 0 ] && break
+        [ "$copy_status" -eq 2 ] && { _wg_cleanup; trap - INT TERM HUP; printf '\n'; return 1; }
+        reject_candidate "$f"
+        status="[WATCHING] Candidate incomplete; waiting for more data…"
+      elif [ "$scan_status" -eq 2 ]; then
+        _wg_cleanup; trap - INT TERM HUP; printf '\n'; return 1
+      elif [ "$scan_status" -eq 3 ]; then
+        status="[WATCHING] Waiting for Configurator to create its cache…"
       fi
     fi
     # one printf; $up does cursor-up-2 via raw escape (no per-frame tput fork)
-    printf '%s\r  %s\n\r  \033[K%s[S] STOP%s   ⏱ %02d:%02d   %s\n' \
-      "$up" "${WAVE_FRAMES[t % WAVE_NFRAMES]}" "$bold" "$reset" "$((SECONDS / 60))" "$((SECONDS % 60))" "$status"
+    printf '%s\r  %s\n\r  \033[K%s[S/Q/Esc] STOP%s   %02d:%02d   %s\n' \
+      "$up" "${WAVE_FRAMES[t % WAVE_NFRAMES]}" "$BOLD" "$RESET" "$((SECONDS / 60))" "$((SECONDS % 60))" "$status"
     up=$'\033[2A'; t=$((t + 1)); sleep 0.04
   done
-  _wg_cleanup; trap - INT
-  printf '\n  %s\n' "$(rainbow_word '▓▒░ ✔ GRABBED ░▒▓')"
-  printf '     %s%s%s  %s(%s bytes)%s\n' "$cyan" "$(basename "$result")" "$reset" "$bold" "$result_sz" "$reset"
-  printf '  %s📂 Reminder:%s your .ipa is on the Desktop →  %s%s%s\n' "$bold" "$reset" "$cyan" "$DEST" "$reset"
-  printf '  Returning to menu…\n'
+  elapsed=$SECONDS
+  _wg_cleanup; trap - INT TERM HUP
+  printf '\n  %s\n' "$(rainbow_word '▓▒░ [GRABBED] Complete IPA saved ░▒▓')"
+  printf '  File:        %s\n' "$(basename "$RESULT")"
+  printf '  Size:        %s (%s bytes)\n' "$(human_size "$RESULT_SIZE")" "$RESULT_SIZE"
+  printf '  Destination: %s\n' "$DEST"
+  printf '  Elapsed:     %02d:%02d\n' "$((elapsed / 60))" "$((elapsed % 60))"
+  printf '  Next: choose GO! to watch for another IPA, or EXIT.\n'
 }
 
+if [ "${IPAGRAB_SOURCE_ONLY:-}" = 1 ]; then return 0 2>/dev/null || exit 0; fi
+[ "$#" -le 1 ] || { error "too many arguments. Next: run ipagrab --help for usage."; exit 2; }
+case "${1:-}" in
+  -h|--help) show_help; exit 0;;
+  '') ;;
+  *) error "unknown option: $1"; printf 'Run ipagrab --help for usage.\n' >&2; exit 2;;
+esac
+preflight || exit 1
 show_banner
+show_setup
 while true; do
-  if ready_menu; then watch_and_grab; else echo "Exiting."; exit 0; fi
+  if ready_menu; then
+    watch_and_grab; watch_status=$?
+    [ "$watch_status" -eq 1 ] && exit 1
+  else
+    state_line "STOPPED" "Session ended; terminal restored."; exit 0
+  fi
 done
