@@ -1,129 +1,113 @@
 # ipagrab
 
-`ipagrab` is a tiny tool to quickly download an IPA of an app you own from the App Store on macOS. Run it locally and privately, with no auth, no credentials, no tokens, no API calls. 
+**Save the IPA Apple Configurator downloads—before it deletes it.**
 
----
+Requires **macOS**, **Apple Configurator**, an **iPhone or iPad connected by USB**, and an **Apple ID that owns the app**. The saved IPA remains **FairPlay-encrypted**.
 
-## ipatool or iMazing not working?
-
-You're not alone. Many users are running into these lately:
-
-**ipatool**
-- `download` fails with `something went wrong` or `invalid response`
-- Auth returns `ERR error="something went wrong" success=false`
-- 2FA code never arrives, or fails after entry (`MZFinance.BadLogin.Configurator_message`)
-- `list-versions` returns `FailureType: 5002` or "An unknown error has occurred"
-- HTTP 200 but `Items: []` or `Items: null` — empty response
-- Downloads stall at `0%` then die with `unknown error`
-- HTTP 429 rate limiting (`mzauth|global|all`)
-- Apple changed the login endpoint — ipatool auth is broken for many accounts
-
-**iMazing**
-- The IPA download button is greyed out and can't be clicked
-
-These are Apple-side restrictions that third-party tools can't easily work around. `ipagrab` lets Apple Configurator (Apple's own app) handle the download, then instantly saves the `.ipa` to your Desktop. No credentials exposed to any third-party tool, no broken API calls.
-
----
-
-## Install
-
-**Step 1 — Open Terminal.**
-Press `Command + Space`, type `Terminal`, press Enter.
-
-**Step 2 — Paste this and press Enter:**
-
-```sh
-git clone https://github.com/NiuLevel/ipagrab.git && cd ipagrab && ./install.sh
-```
-
-**Step 3 — Open a new Terminal window.** You can now type `ipagrab` to launch.
-
-> Don't want to install? Just run `./ipagrab` from the folder.
-
-To uninstall: `cd ipagrab && ./install.sh uninstall`
-
----
+`ipagrab` does not download apps, call Apple services, bypass ownership, or read credentials. Apple Configurator performs the download; this shell script watches its local temporary cache and copies the completed IPA to your Mac.
 
 ## Requirements
 
-- A **Mac**
-- **Apple Configurator** — free on the Mac App Store:
-  <https://apps.apple.com/app/apple-configurator/id1037126344>
-- An **iPhone or iPad** connected via **USB** (Configurator needs a device to trigger the download)
-- Signed into Apple Configurator with the Apple ID that owns the app
-  (*Configurator menu bar → Account → Sign In…*)
+- macOS
+- [Apple Configurator](https://apps.apple.com/app/apple-configurator/id1037126344)
+- An unlocked, trusted iPhone or iPad connected by USB
+- Apple Configurator signed in with the Apple ID that owns the app
+- Apple Configurator opened at least once, plus a writable destination folder
 
----
+## Install
 
-## How to use it
+```sh
+git clone https://github.com/NiuLevel/ipagrab.git
+cd ipagrab
+./install.sh
+```
 
-1. Open **Apple Configurator** and sign in.
-2. Connect your iPhone/iPad via USB → unlock it → tap **Trust This Computer**.
-3. In Terminal, start the watcher **before** you download:
-   ```sh
-   ipagrab
-   ```
-   Select **GO!** with arrow keys and press Enter.
-4. In Apple Configurator: select your device → **Add → Apps…** → find the app → **Add**.
-5. When you see:
-   ```
-   ▓▒░ ✔ GRABBED ░▒▓
-      153045_AppName.ipa  (84231234 bytes)
-   📂 Reminder: your .ipa is on the Desktop
-   ```
-   the `.ipa` is on your Desktop.
-6. Press **`S`** or pick **EXIT** from the menu to stop.
+The installer creates an `ipagrab` symlink in a writable command directory. It will not replace an unrelated file or symlink. If its fallback directory is not on `PATH`, it prints the exact line to add.
 
-**Tip:** If the app is already on the device, Configurator will show a *"replace existing app?"* prompt. Leave it open — the `.ipa` stays in the cache the whole time, so `ipagrab` has plenty of time to copy it. Cancel the prompt once you see `✔ GRABBED`.
+Run without installing:
 
----
+```sh
+./ipagrab
+```
 
-## What it actually does
+Show command help without opening the interactive interface:
 
-`ipagrab` is a ~130-line bash script. It does **not** download anything, talk to Apple, or touch your credentials. It watches one folder on your Mac — Apple Configurator's temp download cache — and the moment a `.ipa` appears, it copies it to your Desktop before Configurator deletes it.
+```sh
+ipagrab --help
+```
 
-> **Whatever Apple Configurator downloads, `ipagrab` saves.**
+Uninstall from the same checkout:
 
-Cache folder watched:
-`~/Library/Group Containers/K36BKF7T3D.group.com.apple.configurator/Library/Caches/Assets/TemporaryItems/MobileApps`
+```sh
+./install.sh uninstall
+```
 
----
+Uninstall removes only a link that points to this checkout.
+
+## Use
+
+1. Open Apple Configurator and sign in.
+2. Connect the device by USB, unlock it, and trust the Mac.
+3. Run `ipagrab`. Confirm the displayed cache and destination, choose **GO!**, and leave the watcher running.
+4. In Configurator, select the device, then choose **Add → Apps…**, find the app, and choose **Add**.
+5. Wait for `GRABBED`. The validated IPA is now in the destination folder, and `ipagrab` returns to its menu.
+6. Choose **EXIT**. To stop before a grab finishes, press `S`, `Q`, or Escape.
+
+Start the watcher before choosing **Add**. Files already in the cache when watching starts are ignored unless Configurator changes them afterward.
+
+Saved files use `HHMMSS_<original-name>.ipa`. If that name exists, `ipagrab` adds `_1`, `_2`, and so on instead of overwriting it.
+
+The interface labels each state as `READY`, `WATCHING`, `VALIDATING`, `GRABBED`, `STOPPED`, or `ERROR`. A successful result shows the filename, readable and exact size, destination, and elapsed time.
+
+## How it works
+
+`ipagrab` watches this Configurator cache:
+
+```text
+~/Library/Group Containers/K36BKF7T3D.group.com.apple.configurator/Library/Caches/Assets/TemporaryItems/MobileApps
+```
+
+When watching starts, it records the IPAs already present. For each new or changed IPA, it verifies that the file is a complete, readable ZIP archive. Incomplete candidates are reconsidered when they change, without blocking other downloads. A valid candidate is copied through a temporary file, validated again, and published without overwriting an existing file.
+
+Unlike tools that authenticate with App Store services themselves, `ipagrab` has no network or account integration. That keeps its role small, but also means it cannot work without Configurator, a connected device, and an eligible Apple account.
 
 ## Limitations
 
-- **You can only get apps your Apple ID owns.** If Configurator won't download it, there's nothing to grab.
-- **Downloading on the phone itself does NOT work.** The download must be driven by Apple Configurator on the Mac.
-- **The `.ipa` is FairPlay-encrypted.** Fine for archiving and sideloading back onto your own devices. Decryption requires a separate process on a jailbroken device.
-- **Start `ipagrab` before clicking Add** — it only catches files that appear while it's running.
-
----
+- Configurator must offer and download the app. `ipagrab` cannot obtain an app the signed-in Apple ID does not own.
+- The download must be initiated in Configurator with a USB-connected device; downloading on the device does not enter this Mac cache.
+- Saved IPAs remain FairPlay-encrypted. `ipagrab` does not decrypt, resign, or remove DRM.
+- If Configurator has not created its download cache yet, `ipagrab` waits for it while you start the download.
+- Only a new or changed IPA is grabbed; unchanged cache files are deliberately ignored.
+- The interactive watcher requires a Terminal. `--help` remains available in non-interactive environments.
+- Apple can change Configurator or its cache layout, which may require this project to change.
 
 ## Troubleshooting
 
-- **Nothing grabbed:** make sure the watcher was on **GO!** *before* you clicked Add, and that Configurator actually started downloading (you'll see a progress bar in Configurator). Retry.
-- **Watching forever:** the cache folder is only created after Configurator has downloaded at least one app. The path is printed at startup — check that it exists.
-- **App missing from the Add list:** use the search box. Delisted apps you own may be hidden — search by exact name.
+- **Waiting for Configurator to create its cache:** leave `ipagrab` watching and start the app download in Configurator.
+- **`Configurator cache does not exist`:** open Configurator once. If using `IPAGRAB_CACHE`, make sure that custom directory already exists.
+- **Nothing is grabbed:** confirm the watcher says `WATCHING` before choosing **Add**, and confirm Configurator is actually downloading the app.
+- **Destination error:** make sure the destination exists and is writable, or set `IPAGRAB_DEST` to another existing folder.
+- **Installer refuses an existing path:** an unrelated `ipagrab` command is already there. Leave it untouched and run this checkout with `./ipagrab`, or resolve the conflict yourself.
+- **App is missing in Configurator:** `ipagrab` cannot make Configurator offer an unavailable or ineligible app.
 
----
+## Configuration
 
-## Configuration (optional)
-
-Override the cache path or destination with environment variables:
+The defaults are Configurator's cache folder and `~/Desktop`. Override either for testing or a different destination:
 
 ```sh
-IPAGRAB_CACHE=/path/to/cache IPAGRAB_DEST=/path/to/dest ipagrab
+IPAGRAB_CACHE=/path/to/cache IPAGRAB_DEST=/path/to/destination ipagrab
 ```
 
-Defaults: Configurator's cache folder and `~/Desktop`.
+Custom cache and destination paths must be absolute, and those directories must already exist. The default Configurator cache may appear after watching starts. The cache must be readable and the destination writable.
 
----
+Set `NO_COLOR=1` to disable optional ANSI colors:
 
-## ⚠️ Responsible use & disclaimer
+```sh
+NO_COLOR=1 ipagrab
+```
 
-`ipagrab` is a personal backup/archive tool only. By using it you agree to:
+## Responsible use
 
-- Only grab apps you legitimately own with your own Apple ID.
-- Not distribute the `.ipa` files it saves.
-- Not decrypt them or strip their DRM.
+Use `ipagrab` only to archive apps you legitimately own. Do not distribute saved IPAs or use this project to bypass licensing, ownership, or DRM controls. You are responsible for complying with applicable laws and Apple's terms.
 
-This tool is provided **"as is", without warranty of any kind** (see [LICENSE](LICENSE)). You are solely responsible for how you use it and for complying with all applicable laws and Apple's terms of service. The author accepts no liability for any misuse, damages, or legal consequences.
+This project is provided as-is under the [MIT License](LICENSE).

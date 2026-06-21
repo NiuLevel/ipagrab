@@ -1,0 +1,19 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run checks
+        run: |
+          bash -n ipagrab install.sh tests/test.sh
+          bash tests/test.sh
+          git diff --check
